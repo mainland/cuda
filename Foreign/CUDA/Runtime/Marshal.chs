@@ -33,7 +33,7 @@ module Foreign.CUDA.Runtime.Marshal (
 
 ) where
 
-#include <cuda_runtime_api.h>
+#include "cbits/stubs.h"
 {# context lib="cudart" #}
 
 -- Friends

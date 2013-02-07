@@ -16,15 +16,36 @@ AC_ARG_WITH([nvcc],     [CUDA compiler],    [NVCC=$withval], [AC_PATH_PROG(NVCC,
 AC_ARG_WITH([gcc],      [C compiler],       [CC=$withval])
 
 if test "$NVCC" != ""; then
+    case $target in
+	*mingw* )
+	    # We need a Windows-style path, but mingw doesn't include cygpath,
+	    # thus this hack.
+	    NVCC=`cd $(dirname $NVCC) && pwd -W`/$(basename nvcc)
+	    ;;
+    esac
+
     cuda_prefix="$(dirname "$(dirname "$NVCC")")"
-    cuda_c2hsflags="--cpp="$NVCC" --cppopts=-E "
-    CPPFLAGS+=" "-I${cuda_prefix}/include" "
+
+    case $target in
+	*mingw* )
+	    cuda_c2hsflags="--cppopts=-E --cppopts="-D${target_os}_TARGET_OS=1" "
+	    ;;
+	* )
+	    cuda_c2hsflags="--cpp="$NVCC" --cppopts=-E "
+	    ;;
+    esac
+
+    CPPFLAGS+=" "-I${cuda_prefix}/include" "-D${target_os}_TARGET_OS=1" "
 #    CC=${NVCC}
 
     case $target in
-    x86_64*) LDFLAGS+=" -L${cuda_prefix}/lib64 " ;;
-    *)       LDFLAGS+=" -L${cuda_prefix}/lib "   ;;
+    *mingw32* ) cuda_libdir="${cuda_prefix}/lib/Win32" ;;
+    *mingw64* ) cuda_libdir="${cuda_prefix}/lib/x64" ;;
+    x86_64*)    cuda_libdir="${cuda_prefix}/lib64" ;;
+    *)          cuda_libdir="${cuda_prefix}/lib"   ;;
     esac
+
+    LDFLAGS+=" -L${cuda_libdir} "
 fi
 
 # Recent versions of Mac OS X (10.6 and later) provides a C extension for
@@ -71,16 +92,38 @@ often require both "lib64" and "lib" library paths, in that order.
 ********************************************************************************'
 
 AC_CHECK_HEADERS([cuda.h cuda_runtime_api.h], [], [AC_MSG_ERROR(could not find CUDA headers${longerror})])
-AC_SEARCH_LIBS(cuDriverGetVersion,    cuda,   [], [AC_MSG_ERROR(could not find CUDA driver library${longerror})])
-AC_SEARCH_LIBS(cudaRuntimeGetVersion, cudart, [], [AC_MSG_ERROR(could not find CUDA runtime library${longerror})])
+
+case $target in
+    *mingw32* )
+    	# AC_SEARCH_LIBS doesn't work on Win32 with functions that use the
+    	# stdcall calling convention, so we use AC_CHECK_DELCS instead.
+	LIBS+="-lcuda -lcudart"
+	AC_CHECK_DECLS([cuDriverGetVersion],
+	    [],
+	    [AC_MSG_ERROR(could not find CUDA driver library${longerror})],
+	    [[#include <cuda.h>]])
+	AC_CHECK_DECLS([cudaRuntimeGetVersion],
+	    [],
+	    [AC_MSG_ERROR(could not find CUDA runtime library${longerror})],
+	    [[#include <cuda_runtime_api.h>]])
+
+	cuda_ghci_libs+="`nm ${cuda_libdir}/cuda.lib | head -2 | tail -1 | sed -e 's/://' -e 's/.dll//'` "
+	cuda_ghci_libs+="`nm ${cuda_libdir}/cudart.lib | head -2 | tail -1 | sed -e 's/://' -e 's/.dll//'` "
+	;;
+    *)
+    	AC_SEARCH_LIBS(cuDriverGetVersion,    cuda,   [], [AC_MSG_ERROR(could not find CUDA driver library${longerror})])
+	AC_SEARCH_LIBS(cudaRuntimeGetVersion, cudart, [], [AC_MSG_ERROR(could not find CUDA runtime library${longerror})])
+	;;	
+esac
 
 # Populate the buildinfo, with the search paths and any target specific options
 #
 cuda_cppflags="$CPPFLAGS "
-cuda_ldflags="$LDFLAGS $LIBS "
+cuda_ldflags="$LDFLAGS "
 
 AC_SUBST([cuda_cppflags])
 AC_SUBST([cuda_ldflags])
 AC_SUBST([cuda_c2hsflags])
+AC_SUBST([cuda_ghci_libs])
 AC_OUTPUT
 
